@@ -1,0 +1,11 @@
+{
+  "active_trader": "SMAtrader",
+  "parameters": {
+    "sma_s": 2,
+    "sma_l": 5,
+    "units": 1000,
+    "freq": "1 min",
+    "end_time": "17:00:00",
+    "contract": "Stock('AAPL')"
+  }
+}

@@ -1,0 +1,164 @@
+
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+from sklearn.multiclass import OneVsRestClassifier # added (from sklearn v. 1.7)
+import matplotlib.pyplot as plt
+import yfinance as yf
+import sys
+from pathlib import Path
+plt.style.use("seaborn-v0_8")
+
+# Import trading cost calculator
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from Utils.TradingCostCalculator import TradingCostCalculator
+
+class MLBacktester():
+    ''' Class for the vectorized backtesting of Machine Learning-based trading strategies (Classification).
+    '''
+
+    def __init__(self, symbol, start, end, interval = '1h', lags = 5, tc = 0):
+        '''
+        Parameters
+        ----------
+        symbol: str
+            ticker symbol (instrument) to be backtested
+        start: str
+            start date for data import
+        end: str
+            end date for data import
+        tc: float
+            proportional transaction/trading costs per trade
+        '''
+        self.symbol = symbol
+        self.start = start
+        self.end = end
+        self.tc = tc
+        self.interval = interval
+        self.lags = lags
+        self.model = OneVsRestClassifier(LogisticRegression(C = 1e6, max_iter = 100000)) # new (from sklearn v. 1.7)
+        self.results = None
+        
+        # Initialize trading cost calculator
+        try:
+            self.trading_costs = TradingCostCalculator(symbol, days=30, interval=interval)
+        except Exception as e:
+            print(f"Warning: Could not calculate trading costs: {str(e)}")
+            self.trading_costs = None
+            
+        self.get_data()
+    
+    def __repr__(self):
+        rep = "MLBacktester(symbol = {}, start = {}, end = {}, tc = {})"
+        return rep.format(self.symbol, self.start, self.end, self.tc)
+                             
+    def get_data(self):
+        ''' Imports the data from five_minute_pairs.csv (source can be changed).
+        '''
+        raw = yf.download(self.symbol, self.start, self.end, multi_level_index=False, interval = self.interval)
+        raw = raw['Close'].to_frame().dropna()
+        raw.rename(columns={'Close': "price"}, inplace=True)
+        raw["returns"] = np.log(raw / raw.shift(1))
+        raw["hour"] = raw.index.hour  # Add hour for trading cost lookup
+        self.data = raw
+                             
+    def split_data(self, start, end):
+        ''' Splits the data into training set & test set.
+        '''
+        data = self.data.loc[start:end].copy()
+        return data
+    
+    def prepare_features(self, start, end):
+        ''' Prepares the feature columns for training set and test set.
+        '''
+        self.data_subset = self.split_data(start, end)
+        self.feature_columns = []
+        for lag in range(1, self.lags + 1):
+            col = "lag{}".format(lag)
+            self.data_subset[col] = self.data_subset["returns"].shift(lag)
+            self.feature_columns.append(col)
+        self.data_subset.dropna(inplace=True)
+
+    def scale_features(self, recalc = True): # Newly added
+        ''' Scales/Standardizes Features
+        '''
+        if recalc:
+            self.means = self.data_subset[self.feature_columns].mean()
+            self.stand_devs = self.data_subset[self.feature_columns].std()
+        
+        self.data_subset[self.feature_columns] = (self.data_subset[self.feature_columns] - self.means) / self.stand_devs
+        
+    def fit_model(self, start, end):
+        ''' Fitting the ML Model.
+        '''
+        self.prepare_features(start, end)
+        self.scale_features(recalc = True) # calculate mean & std of train set and scale train set
+        self.model.fit(self.data_subset[self.feature_columns], np.sign(self.data_subset["returns"]))
+        
+    def test_strategy(self, train_ratio = 0.7):
+        ''' 
+        Backtests the ML-based strategy.
+        
+        Parameters
+        ----------
+        train_ratio: float (between 0 and 1.0 excl.)
+            Splitting the dataset into training set (train_ratio) and test set (1 - train_ratio).
+        lags: int
+            number of lags serving as model features.
+        '''                  
+        # determining datetime for start, end and split (for training an testing period)
+        full_data = self.data.copy()
+        split_index = int(len(full_data) * train_ratio)
+        split_date = full_data.index[split_index-1]
+        train_start = full_data.index[0]
+        test_end = full_data.index[-1]
+        
+        # fit the model on the training set
+        self.fit_model(train_start, split_date)
+        
+        # prepare the test set
+        self.prepare_features(split_date, test_end)
+        self.scale_features(recalc = False) # Newly added -> scale test set features with train set mean & std
+                  
+        # make predictions on the test set
+        predict = self.model.predict(self.data_subset[self.feature_columns])
+        self.data_subset["pred"] = predict
+        
+        # calculate Strategy Returns
+        self.data_subset["strategy"] = self.data_subset["pred"] * self.data_subset["returns"]
+        
+        # determine the number of trades in each bar
+        self.data_subset["trades"] = self.data_subset["pred"].diff().fillna(0).abs()
+        
+        # Apply hourly trading costs
+        hourly_costs = np.zeros(len(self.data_subset))
+        if self.trading_costs:
+            for idx, hour in enumerate(self.data_subset['hour']):
+                hourly_costs[idx] = self.trading_costs.get_hourly_cost(int(hour))
+        else:
+            hourly_costs = np.full(len(self.data_subset), self.tc)
+        
+        # subtract transaction/trading costs from pre-cost return
+        self.data_subset.strategy = self.data_subset.strategy - self.data_subset.trades * hourly_costs
+        
+        # calculate cumulative returns for strategy & buy and hold
+        self.data_subset["creturns"] = self.data_subset["returns"].cumsum().apply(np.exp)
+        self.data_subset["cstrategy"] = self.data_subset['strategy'].cumsum().apply(np.exp)
+        self.results = self.data_subset
+        
+        perf = self.results["cstrategy"].iloc[-1] # absolute performance of the strategy
+        outperf = perf - self.results["creturns"].iloc[-1] # out-/underperformance of strategy
+        
+        return round(perf, 6), round(outperf, 6)
+    
+    def optimize_parameters(self):
+        pass
+        
+    def plot_results(self):
+        ''' Plots the performance of the trading strategy and compares to "buy and hold".
+        '''
+        if self.results is None:
+            print("Run test_strategy() first.")
+        else:
+            title = "Logistic Regression: {} | TC = {}".format(self.symbol, self.tc)
+            self.results[["creturns", "cstrategy"]].plot(title=title, figsize=(12, 8))
