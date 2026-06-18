@@ -293,3 +293,4 @@ print(f"Performance: {perf}, Outperformance: {outperf}")
 ## Contact & Support
 
 For questions or issues with the implementation, refer to the architecture notes in `/memories/repo/trading_system_architecture.md`
+"# Algo_Trading" 
