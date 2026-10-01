@@ -1,11 +1,10 @@
 {
-  "active_trader": "SMAtrader",
+  "active_trader": "Contrader",
   "parameters": {
-    "sma_s": 2,
-    "sma_l": 5,
-    "units": 1000,
+    "window": 5,
+    "units": 100000,
     "freq": "1 min",
     "end_time": "17:00:00",
-    "contract": "Stock('AAPL')"
+    "contract": "Forex(EURUSD)"
   }
 }

@@ -3,7 +3,7 @@
 Contrarian (Mean Reversion) Trading Strategy
 Generates trading signals based on mean reversion of returns.
 """
-from ib_async import IB, Forex, MarketOrder, util
+from ib_async import IB, Forex, MarketOrder, util, Stock
 import pandas as pd
 import numpy as np
 import datetime as dt
@@ -13,7 +13,7 @@ import os
 class ConTrader:
     """Contrarian trading strategy class."""
     
-    def __init__(self, window=5, units=1000, freq="1 min", end_time="11:21:00", contract = Forex("EURUSD")):
+    def __init__(self, window=5, units=1000, freq="1 min", end_time="11:21:00", contract = 'Forex("EURUSD")'):
         """
         Initialize Contrarian Trader.
         
@@ -34,6 +34,15 @@ class ConTrader:
         self.end_time = self._parse_time(end_time)
         
         self.ib = None
+        class_name, arg = contract.replace(')', '').split('(')
+        
+        # Assuming 'Stock' is a class you have defined
+        if class_name == "Stock":
+            stock, mode, currency = arg.split(",")
+            contract = Stock(stock.strip(' "\''), mode.strip(' "\''), currency.strip(' "\''))
+        elif class_name == "Forex":
+            arg = arg.strip('"\'') # Remove surrounding quotes
+            contract = Forex(arg)
         self.contract = contract
         self.conID = None
         self.current_pos = 0

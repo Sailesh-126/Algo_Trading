@@ -14,7 +14,7 @@ import os
 class MLTrader:
     """Machine Learning trading strategy class."""
     
-    def __init__(self, lags=5, units=1000, freq="1 min", end_time="11:21:00", contract = Forex('EURUSD')):
+    def __init__(self, lags=5, units=1000, freq="1 min", end_time="11:21:00", contract = "Forex('EURUSD')"):
         """
         Initialize ML Trader.
         
